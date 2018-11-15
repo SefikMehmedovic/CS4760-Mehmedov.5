@@ -18,7 +18,7 @@
 // shared memory key and size of shared memory.. size of an int(4 bytes)
 #define SHMKEYA 321800
 #define SHMKEYB 321801
-#define BUFF_SZ	sizeof ( int )
+//#define BUFF_SZ	sizeof ( int )
 //----------------------------------------------------
 
 //struct for clock
@@ -51,12 +51,14 @@ struct mesg_buffer {
 
 //global variables
 int clockSHMID;//shared memory id
-systemClock_t *clockShmPtr; //pointer to data struct
-int resourceSHMID;//resource
+clockTime *clockShmPtr; //pointer to data struct
+int resourceSHMID;//resource shared memory id
 resourceMemory *resourcePointer;
 int count = 0;
+int s=10; //default s value is 10
 int pidHolder[18] = {};
 int randomClockTime[18] = {};
+int blockedQueue[18] = {};
 
 //message queue
 key_t key;
@@ -66,10 +68,14 @@ int msgid;
 //function headers
 void signalHandler(int sig);
 void cleanUp();
+void messageQueueConfig();
+void shareMemory();
 
+//-----------------------------------------------------------------------------------
+//-----------------------------------------------------------------------------------
 int main(int argc, char* argv[])
 {
-  int input, s;
+  int input;
   
   
   
@@ -114,41 +120,44 @@ int main(int argc, char* argv[])
  return 0;//return main
 }// main
 
-
+//-----------------------------------------------------------------------------------
+//-----------------------------------------------------------------------------------
 
 //shared memory function
-void shareMemory() {
-
+void shareMemory()
+{
     //shared mem for sysClock
-    sysClockshmid = shmget(SHMKEYA, sizeof(clockTime), IPC_CREAT|0777);
-    if(sysClockshmid < 0)
+    clockSHMID = shmget(SHMKEYA, sizeof(clockTime), IPC_CREAT|0777);
+    if(clockSHMID < 0)
     {
-        perror("sysClock shmget error in master \n");
-        exit(errno);
+        printf("ERROR: OSS shmget \n");
+        exit(EXIT_FAILURE);
     }
-    sysClockshmPtr = shmat(sysClockshmid, NULL, 0);
-    if(sysClockshmPtr < 0){
-        perror("sysClock shmat error in oss\n");
-        exit(errno);
+    clockShmPtr = shmat(clockSHMID, NULL, 0);
+    if(clockShmPtr < 0){
+        printf("Error: OSS shmat\n");
+        exit(EXIT_FAILURE);
     }
 
-    //shared memory for the resrouce 
-    RDshmid = shmget(SHMKEYB, sizeof(rescourceDescriptor_t), IPC_CREAT|0777);
-    if(RDshmid < 0)
+    //shared mem for Rescource Descriptor
+    resourceSHMID = shmget(SHMKEYB, sizeof(resourceMemory), IPC_CREAT|0777);
+    if(resourceSHMID < 0)
     {
-        perror("RD shmget error in master \n");
-        exit(errno);
+        printf("ERROR: OSS shmget resource\n");
+        exit(EXIT_FAILURE);
     }
-    RDPtr = shmat(RDshmid, NULL, 0);
-    if(RDPtr < 0){
-        perror("sysClock shmat error in oss\n");
-        exit(errno);
+    resourcePointer = shmat(resourceSHMID, NULL, 0);
+    if(resourcePointer < 0){
+        printf("ERROR: OSS shmget resource\n");
+        exit(EXIT_FAILURE);
     }
-
-
 }
+//setup message queue function
+void messageQueueConfig(){
+    key = ftok("oss.c", 10);
 
-
+    msgid = msgget(key, 0666 | IPC_CREAT);
+}
 
 
 //------signal handler for CTRL+C

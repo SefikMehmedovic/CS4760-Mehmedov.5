@@ -52,7 +52,7 @@ struct mesg_buffer {
 
 //global variables
 int clockSHMID;//shared memory id
-systemClock_t *clockShmPtr; //pointer to data struct
+clockTime *clockShmPtr; //pointer to data struct
 int resourceSHMID;//resource
 resourceMemory *resourcePointer;
 int count = 0;
@@ -68,6 +68,8 @@ int msgid;
 //function headers
 void signalHandler(int sig);
 void cleanUp();
+void shareMemory();
+void messageQueueConfig();
 
 //----------------------------------------------------
 int main(int argc, char* argv[]) 
@@ -83,6 +85,43 @@ return 0;//main return
 
 //----------------------------------------------------
 
+void shareMemory()
+{
+    //shared mem for sysClock
+    clockSHMID = shmget(SHMKEYA, sizeof(clockTime), IPC_CREAT|0777);
+    if(clockSHMID < 0)
+    {
+        printf("ERROR: OSS shmget \n");
+        exit(EXIT_FAILURE);
+    }
+    clockShmPtr = shmat(clockSHMID, NULL, 0);
+    if(clockShmPtr < 0){
+        printf("Error: OSS shmat\n");
+        exit(EXIT_FAILURE);
+    }
+
+    //shared mem for Rescource Descriptor
+    resourceSHMID = shmget(SHMKEYB, sizeof(resourceMemory), IPC_CREAT|0777);
+    if(resourceSHMID < 0)
+    {
+        printf("ERROR: OSS shmget resource\n");
+        exit(EXIT_FAILURE);
+    }
+    resourcePointer = shmat(resourceSHMID, NULL, 0);
+    if(resourcePointer < 0){
+        printf("ERROR: OSS shmget resource\n");
+        exit(EXIT_FAILURE);
+    }
+}
+//setup message queue function
+void messageQueueConfig()
+{
+    key = ftok("oss.c", 10);
+
+    msgid = msgget(key, 0666 | IPC_CREAT);
+}
+
+//------------------------
 void signalHandler(int sig)
 {
   if( sig == SIGINT)
