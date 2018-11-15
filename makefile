@@ -9,4 +9,4 @@ $(objects): %: %.c
 	$(CC) $(CFLAGS) -o $@ $< -pthread
 
 clean:
-	rm $(objects) 
+	rm $(objects)  *.txt

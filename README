@@ -10,3 +10,4 @@ Program 5 -- Resource Management --
 ./oss  runs the program with default settings.
 ./oss -s x	runs the amount of processes default is 10
 ./oss -h  displays help info
+---------------------------------------------------------------

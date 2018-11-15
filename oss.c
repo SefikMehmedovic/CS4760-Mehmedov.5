@@ -18,16 +18,51 @@
 // shared memory key and size of shared memory.. size of an int(4 bytes)
 #define SHMKEYA 321800
 #define SHMKEYB 321801
-#define BUFF_SZ	sizeof ( int 
+#define BUFF_SZ	sizeof ( int )
 //----------------------------------------------------
+
 //struct for clock
 typedef struct {
     unsigned int seconds;
     unsigned int nanoSeconds;
 } clockTime;
+//---------------------
+typedef struct {
+    pid_t pids[18];
+    int pidJob[18];
+    int nanosRequest[18];
+    
+// tables for bakers algorithm
+    int rescources[20];
+    int max[18][20];
+    int allocated[18][20];
+    int request[18][20];
+} resourceMemory;
+//---------------------
+
+//struct for message queues
+struct mesg_buffer {
+    long mesg_type;
+    char mesg_text[100];
+} message;
+//---------------------
 
 
 
+//global variables
+int clockSHMID;//shared memory id
+systemClock_t *clockShmPtr; //pointer to data struct
+int resourceSHMID;//resource
+resourceMemory *resourcePointer;
+int count = 0;
+int pidHolder[18] = {};
+int randomClockTime[18] = {};
+
+//message queue
+key_t key;
+int msgid;
+
+//-------------------------------
 //function headers
 void signalHandler(int sig);
 void cleanUp();
@@ -40,13 +75,12 @@ int main(int argc, char* argv[])
   
   
   //command line... should make this a function...//todo make function command parsing//
-	while ((input = getopt(argc, argv, "hs:l:")) != -1){
+	while ((input = getopt(argc, argv, "hs:")) != -1){
 		switch(input){
 			
 			case 'h':
 				printf("Usage:\n");
 				printf("./oss  runs the program with default settings.\n");
-				printf("./oss -l fileName changes fileName\n");
 				printf("./oss -s x	runs the amount of processes default is 10\n");
 				printf("./oss -h  displays help info\n");
 			exit(0);
@@ -63,11 +97,7 @@ int main(int argc, char* argv[])
 				}
 			break;
 			// filename config switch
-			case 'l':
-				//fileRename = optarg;
-				printf("\nRename File\n");
-				
-			break;		
+	
 			// handle missing required arguments and unknown arguments
 			case'?':
 				if(optopt == 's' || optopt == 'f'){
@@ -83,6 +113,42 @@ int main(int argc, char* argv[])
  
  return 0;//return main
 }// main
+
+
+
+//shared memory function
+void shareMemory() {
+
+    //shared mem for sysClock
+    sysClockshmid = shmget(SHMKEYA, sizeof(clockTime), IPC_CREAT|0777);
+    if(sysClockshmid < 0)
+    {
+        perror("sysClock shmget error in master \n");
+        exit(errno);
+    }
+    sysClockshmPtr = shmat(sysClockshmid, NULL, 0);
+    if(sysClockshmPtr < 0){
+        perror("sysClock shmat error in oss\n");
+        exit(errno);
+    }
+
+    //shared memory for the resrouce 
+    RDshmid = shmget(SHMKEYB, sizeof(rescourceDescriptor_t), IPC_CREAT|0777);
+    if(RDshmid < 0)
+    {
+        perror("RD shmget error in master \n");
+        exit(errno);
+    }
+    RDPtr = shmat(RDshmid, NULL, 0);
+    if(RDPtr < 0){
+        perror("sysClock shmat error in oss\n");
+        exit(errno);
+    }
+
+
+}
+
+
 
 
 //------signal handler for CTRL+C
