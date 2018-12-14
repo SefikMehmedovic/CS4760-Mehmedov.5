@@ -19,6 +19,9 @@
 #define SHMKEYA 321800
 #define SHMKEYB 321801
 //#define BUFF_SZ	sizeof ( int )
+
+#define MAX_FORKS 18
+#define MAX_RAND 5
 //----------------------------------------------------
 
 //struct for clock
@@ -54,11 +57,13 @@ int clockSHMID;//shared memory id
 clockTime *clockShmPtr; //pointer to data struct
 int resourceSHMID;//resource shared memory id
 resourceMemory *resourcePointer;
-int count = 0;
+int count = 0; //lines of logfile
 int s=10; //default s value is 10
+int requestTime = 0;
 int pidHolder[18] = {};
 int randomClockTime[18] = {};
 int blockedQueue[18] = {};
+void writeResultsToLog();
 
 //message queue
 key_t key;
@@ -70,16 +75,23 @@ void signalHandler(int sig);
 void cleanUp();
 void messageQueueConfig();
 void shareMemory();
+void initTable();
+void ossClock();
+void createProcess(int pidHolder[]);
+void checkMsgQ();
+void logAllocatedMatrix();
+void processJob(int);
+void logProcDetected(int procNumber, int reqNum);
+void logBlocked(int procNumber, int reqNum);
+void logAllocated(int procNumber, int reqNum);
+
 
 //-----------------------------------------------------------------------------------
 //-----------------------------------------------------------------------------------
 int main(int argc, char* argv[])
 {
-  int input;
-  
-  
-  
-  
+  int input; //user input 
+
   //command line... should make this a function...//todo make function command parsing//
 	while ((input = getopt(argc, argv, "hs:")) != -1){
 		switch(input){
@@ -116,6 +128,36 @@ int main(int argc, char* argv[])
 			exit(1);
 		}
 	}
+ //---------------------------------------------------------------
+ 
+   //set up shared memory
+  shareMemory();
+  
+  //setup message Qs
+  messageQueueConfig();
+ 
+//signal and alarm handlers
+signal(SIGINT,signalHandler);
+alarm(2); //alarm after 2 seconds
+//------------------------------
+
+
+//init the resource table
+initTables();
+ 
+//increment clock
+while(1)
+{
+  //to increment clock by 1.5s
+  ossClock();
+  createProcess(pidHolder); 
+  checkMsgQ();
+  
+  //print table
+  logAllocatedMatrix();
+   writeResultsToLog();
+} 
+
  
  return 0;//return main
 }// main
@@ -158,6 +200,19 @@ void messageQueueConfig(){
 
     msgid = msgget(key, 0666 | IPC_CREAT);
 }
+//-------------------------------------------------------
+//check message que function
+void checkMsgQ(){
+    int pidPass;
+    msgrcv(msgid, &message, sizeof(message), 1, IPC_NOWAIT);
+
+    if(message.mesg_text[0] != '0') {
+        pidPass = atoi(message.mesg_text);
+        processJob(pidPass);
+    }
+
+    strcpy(message.mesg_text, "0");
+}
 
 
 //------signal handler for CTRL+C
@@ -174,9 +229,311 @@ void signalHandler(int sig)
 void cleanUp()
 {
   printf("\nClean up started....\n");
-  //shmctl(shmidA, IPC_RMID, NULL);
-//  shmctl(shmidB, IPC_RMID, NULL);
-//  free(pcpids);
- // sem_close(semaphore);
+shmdt(clockShmPtr);
   
+}
+//----------------------------------------------
+
+void ossClock(){
+
+    int clockIncrement = 150000; // increment clock by 150000 1.5s
+    int rollover;
+
+    if ((clockShmPtr->nanoSeconds + clockIncrement) > 999999999){
+        rollover = (clockShmPtr->nanoSeconds + clockIncrement) - 999999999;
+        clockShmPtr->seconds += 1;
+        clockShmPtr->nanoSeconds = rollover;
+    } else {
+        clockShmPtr->nanoSeconds += clockIncrement;
+    }
+    usleep(200);
+}
+
+void createProcess(int pidHolder[]){
+    int i, k;
+    for(i = 0; i < MAX_FORKS; i++){
+        if(pidHolder[i] == 0) {
+
+            for(k = 0; k < 20; k++){
+                resourcePointer->request[i][k] = (rand() % MAX_RAND) + 1;
+            }
+            int randPercent = (rand() % 100) + 1;
+
+            if(randPercent >= 91){          
+                resourcePointer->pidJob[i] = 0;
+            }else if (randPercent >= 60){ 
+                resourcePointer->pidJob[i] = 1;
+            }else{                       
+                resourcePointer->pidJob[i] = 2;
+            }
+            randomClockTime[i] = (rand() % 500000000) + 1500000;
+
+            char stashbox[10];
+            sprintf(stashbox, "%d", randomClockTime[i]);
+
+            ////fork process
+            if ((pidHolder[i] = fork()) == 0) {
+                execl("./oss", stashbox, NULL);
+            }
+        }
+    }
+}
+//---------------------------
+void logAllocatedMatrix(){
+
+    int lines;
+    int ch = 0;
+
+    FILE *fp = fopen("log.txt", "a+");
+
+    while(!feof(fp))
+    {
+        ch = fgetc(fp);
+        if(ch == '\n')
+        {
+            lines++;
+        }
+    }
+    if(lines % 20 == 0) {
+
+    fprintf(fp, "\n");
+
+    fprintf(fp, "Allocate Table\n");
+    fprintf(fp, "-----------------------------------------------------------\n");
+    fprintf(fp, "     \n");
+    int i, k;
+    for(k = 0; k < 20; k++){
+        fprintf(fp, "R%02i ", k);
+    }
+
+    fprintf(fp, "\n");
+
+    for(i = 0; i < 18; i++){
+        fprintf(fp, "P%02i:", i);
+        for(k = 0; k < 20; k++){
+            fprintf(fp, "%4d", resourcePointer->allocated[i][k]);
+            count++;
+        }
+        fprintf(fp, "\n");
+    }
+
+    fprintf(fp, "\n");
+    }
+
+    fclose(fp);
+
+}
+
+//----------------------------------------------------------------------------
+void initTables(){
+
+    // init clock to random
+    time_t t;
+    srand((unsigned) time(&t));
+
+    int randomNum;
+
+    // for max table
+    int i, k;
+    for(i = 0; i < 18; i++){
+        for(k = 0; k < 20; k++){
+            randomNum = (rand() % MAX_RAND) + 1;
+            resourcePointer->max[i][k] = randomNum;
+        }
+    }
+
+    // for initial rescources
+    for(i = 0; i < 20; i++){
+        randomNum = (rand() % 10) + 1;
+        resourcePointer->rescources[i] = randomNum;
+    }
+}
+//-------------------------------------------------------------------------
+void processJob(int pid){
+
+    int jobNumber;
+    int procNumber;
+    int rescourceRequestNumber;
+
+    //get job number for pid
+    int i;
+    for(i = 0; i < 18; i++){
+        if(pidHolder[i] == pid){
+            jobNumber = resourcePointer->pidJob[i];
+            procNumber = i;
+            rescourceRequestNumber = (rand() % 20);
+            // write to log file
+            logProcDetected(procNumber, rescourceRequestNumber);
+        }
+    }
+    if(jobNumber == 1 || jobNumber == 2)
+    { 
+        if(resourcePointer->request[procNumber][rescourceRequestNumber] <= resourcePointer->rescources[rescourceRequestNumber])
+        {
+            resourcePointer->allocated[procNumber][rescourceRequestNumber] = resourcePointer->request[procNumber][rescourceRequestNumber];
+            //update rescources
+            resourcePointer->rescources[rescourceRequestNumber] -= resourcePointer->request[procNumber][rescourceRequestNumber];
+            logAllocated(procNumber, rescourceRequestNumber);
+        } 
+        else 
+        {
+            //assign to blocked queue
+            int i;
+            int posted = 0;
+            for(i = 0; i < 18; i++){
+                if(blockedQueue[i] == 0){
+                    blockedQueue[i] = pid;
+                    posted = 1;
+                    //write to log
+                    logBlocked(procNumber, rescourceRequestNumber);
+                }
+                if(posted == 1){
+                    i = 18;
+                }
+            }
+        }
+    } 
+    else if(jobNumber == 0) 
+    {            
+       requestTime = 1;
+        pidHolder[procNumber] = 0;
+    }
+}
+//-------------------------------------------------------
+void logProcDetected(int procNumber, int reqNum){
+
+    FILE *fp = fopen("log.txt", "a+");
+    fprintf(fp, "OSS: detected Process P%d requesting R%d at time %d:%d\n",
+            procNumber, reqNum, clockShmPtr->seconds, clockShmPtr->nanoSeconds);
+    fclose(fp);
+
+}
+//-------------------------------------------------------------------------
+void logAllocated(int procNumber, int reqNum){
+
+    FILE *fp = fopen("log.txt", "a+");
+    fprintf(fp, "OSS: granted P%d request R%d at time %d:%d\n",
+            procNumber, reqNum, clockShmPtr->seconds, clockShmPtr->nanoSeconds);
+    fclose(fp);
+
+}
+void logBlocked(int procNumber, int reqNum){
+
+    FILE *fp = fopen("log.txt", "a+");
+
+    fprintf(fp, "OS blocking P%d for requesting R%d at time %d:%d\n",
+            procNumber, reqNum, clockShmPtr->seconds, clockShmPtr->nanoSeconds);
+
+    fclose(fp);
+
+}
+//--------------------------------------------------------------
+void writeResultsToLog(){
+
+    FILE *fp = fopen("log.txt", "a+");
+
+    int i, k;
+
+    // init max table
+    fprintf(fp, "MAX TABLE \n");
+        fprintf(fp, "-----------------------------------------------------------\n");
+    fprintf(fp, "     ");
+    for(k = 0; k < 20; k++){
+        fprintf(fp, "R%02i ", k);
+    }
+
+    fprintf(fp, "\n");
+
+    for(i = 0; i < 18; i++){
+        fprintf(fp, "P%02i:", i);
+        for(k = 0; k < 20; k++){
+            fprintf(fp, "%4d", resourcePointer->max[i][k]);
+            count++;
+        }
+        fprintf(fp, "\n");
+    }
+
+    // for initial rescources
+    fprintf(fp, "\nRESCOURCES\n");
+        fprintf(fp, "-----------------------------------------------------------\n");
+    fprintf(fp, "     ");
+    for(k = 0; k < 20; k++){
+        fprintf(fp, "R%02i ", k);
+    }
+
+    fprintf(fp, "\n    ");
+
+    for(k = 0; k < 20; k++){
+        fprintf(fp, "%4d", resourcePointer->rescources[k]);
+    }
+
+    fprintf(fp, "\n");
+
+    // init max table
+    fprintf(fp, "REQUEST TABLE \n");
+    fprintf(fp, "-----------------------------------------------------------\n");
+    fprintf(fp, "     ");
+    for(k = 0; k < 20; k++){
+        fprintf(fp, "R%02i ", k);
+    }
+
+    fprintf(fp, "\n");
+
+    for(i = 0; i < 18; i++){
+        fprintf(fp, "P%02i:", i);
+        for(k = 0; k < 20; k++){
+            fprintf(fp, "%4d", resourcePointer->request[i][k]);
+            count++;
+        }
+        fprintf(fp, "\n");
+    }
+
+    fprintf(fp, "\n");
+
+    fprintf(fp, "JOBS\n");
+        fprintf(fp, "-----------------------------------------------------------\n");
+    for(i = 0; i < MAX_FORKS; i++){
+        fprintf(fp, "%d    ", resourcePointer->pidJob[i]);
+    }
+
+    fprintf(fp, "\n");
+
+    fprintf(fp, "TIME INTERVALS\n");
+        fprintf(fp, "-----------------------------------------------------------\n");
+    for(i = 0; i < MAX_FORKS; i++){
+        fprintf(fp, "%d    ", randomClockTime[i]);
+    }
+
+    fprintf(fp, "\n");
+
+    // init max table
+    fprintf(fp, "ALLOCATED\n");
+        fprintf(fp, "-----------------------------------------------------------\n");
+    fprintf(fp, "     ");
+    for(k = 0; k < 20; k++){
+        fprintf(fp, "R%02i ", k);
+    }
+
+    fprintf(fp, "\n");
+
+    for(i = 0; i < 18; i++){
+        fprintf(fp, "P%02i:", i);
+        for(k = 0; k < 20; k++){
+            fprintf(fp, "%4d", resourcePointer->allocated[i][k]);
+            count++;
+        }
+        fprintf(fp, "\n");
+    }
+
+    fprintf(fp, "\n");
+
+    fprintf(fp, "BLOCKED QUEUE\n");
+        fprintf(fp, "-----------------------------------------------------------\n");
+    for(i = 0; i < MAX_FORKS; i++){
+        fprintf(fp, "%d    ", blockedQueue[i]);
+    }
+
+
+
+    fclose(fp);
 }

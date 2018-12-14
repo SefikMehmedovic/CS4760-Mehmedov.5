@@ -56,8 +56,10 @@ clockTime *clockShmPtr; //pointer to data struct
 int resourceSHMID;//resource
 resourceMemory *resourcePointer;
 int count = 0;
+int requestTime = 0;
 int pidHolder[18] = {};
 int randomClockTime[18] = {};
+
 
 //message queue
 key_t key;
@@ -74,12 +76,49 @@ void messageQueueConfig();
 //----------------------------------------------------
 int main(int argc, char* argv[]) 
 {
-int incrementClock;
+int incrementClock, rollOver;
+
+int seconds = clockShmPtr->seconds;
+int nanoSeconds = clockShmPtr->nanoSeconds;
 
 
 
+//signal and alarm handlers
+signal(SIGINT,signalHandler);
+alarm(2); //alarm after 2 seconds
+  
+  //set up shared memory
+  shareMemory();
+  //setup message Qs
+  messageQueueConfig();
 
-  printf("USER");
+
+
+incrementClock = atoi(argv[0]);
+
+if ((nanoSeconds + incrementClock) > 999999999){
+        rollOver = (nanoSeconds + incrementClock) - 999999999;
+        seconds += 1;
+        nanoSeconds = rollOver;
+    } else {
+        nanoSeconds += incrementClock;
+    }
+
+    while(requestTime == 0){
+
+        if(clockShmPtr->seconds >= seconds && clockShmPtr->nanoSeconds >= nanoSeconds){
+
+            sprintf(message.mesg_text, "%d", getpid());
+            message.mesg_type = 1;
+            msgsnd(msgid, &message, sizeof(message), 0);
+            requestTime = 1;
+        }
+
+    }
+   
+
+
+ // printf("USER");
 return 0;//main return
 }//main
 
@@ -135,9 +174,7 @@ void signalHandler(int sig)
 void cleanUp()
 {
   printf("\nClean up started....\n");
-  //shmctl(shmidA, IPC_RMID, NULL);
-//  shmctl(shmidB, IPC_RMID, NULL);
-//  free(pcpids);
- // sem_close(semaphore);
+ shmdt(clockShmPtr);
+ shmdt(resourcePointer);
   
 }
